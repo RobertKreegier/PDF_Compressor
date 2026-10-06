@@ -17,6 +17,8 @@ struct FileItem: Identifiable {
 struct ContentView: View {
     @State private var items: [FileItem] = []
     @State private var level: CompressionLevel = .medium
+    @State private var flatten = false
+    @State private var grayscale = false
     @State private var isTargeted = false
     @State private var isRunning = false
     @State private var showImporter = false
@@ -39,8 +41,19 @@ struct ContentView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(maxWidth: 260)
+                .frame(maxWidth: 340)
                 Text(level.detail).font(.callout).foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            HStack {
+                Toggle("Flatten pages to images", isOn: $flatten)
+                    .help("Re-renders every page as a picture. Often much smaller, but text can no longer be selected or searched and links are lost.")
+                Toggle("Grayscale", isOn: $grayscale)
+                    .disabled(!flatten)
+                if flatten {
+                    Text("Text won't be selectable").font(.callout).foregroundStyle(.orange)
+                }
                 Spacer()
             }
 
@@ -55,7 +68,7 @@ struct ContentView: View {
             }
         }
         .padding()
-        .frame(minWidth: 520, minHeight: 360)
+        .frame(minWidth: 560, minHeight: 380)
         .onDrop(of: [.fileURL], isTargeted: $isTargeted, perform: handleDrop)
         .fileImporter(isPresented: $showImporter, allowedContentTypes: [.pdf], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { add(urls) }
@@ -111,13 +124,13 @@ struct ContentView: View {
     private func compressAll() {
         guard let outputFolder = chooseOutputFolder() else { return }
         isRunning = true
-        let level = level
+        let options = CompressionOptions(level: level, flatten: flatten, grayscale: grayscale)
         let pending = items.filter { if case .done = $0.status { false } else { true } }
         Task {
             for item in pending {
                 update(item.id, .working)
                 let status: FileItem.Status = await Task.detached {
-                    Self.compress(item.url, into: outputFolder, level: level)
+                    Self.compress(item.url, into: outputFolder, options: options)
                 }.value
                 update(item.id, status)
             }
@@ -130,7 +143,7 @@ struct ContentView: View {
     }
 
     /// Writes "<name> compressed.pdf" into `folder`, never overwriting existing files.
-    nonisolated private static func compress(_ url: URL, into folder: URL, level: CompressionLevel) -> FileItem.Status {
+    nonisolated private static func compress(_ url: URL, into folder: URL, options: CompressionOptions) -> FileItem.Status {
         let accessing = url.startAccessingSecurityScopedResource()
         let folderAccessing = folder.startAccessingSecurityScopedResource()
         defer {
@@ -146,7 +159,7 @@ struct ContentView: View {
             n += 1
         }
         do {
-            let result = try PDFCompressor.compress(source: url, destination: destination, level: level)
+            let result = try PDFCompressor.compress(source: url, destination: destination, options: options)
             return .done(result, destination)
         } catch {
             return .failed(error.localizedDescription)
@@ -187,7 +200,7 @@ struct FileRow: View {
                 Text("\(format(r.originalSize)) → \(format(r.newSize)) (\(Int(saved.rounded()))% smaller)")
                     .font(.caption).foregroundStyle(.secondary)
             } else {
-                Text("Already well compressed — copy saved unchanged (\(format(r.originalSize)))")
+                Text("Couldn't get smaller — copy saved unchanged (\(format(r.originalSize)))")
                     .font(.caption).foregroundStyle(.orange)
             }
         }
